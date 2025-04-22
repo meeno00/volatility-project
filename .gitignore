@@ -1,0 +1,12 @@
+# Ignore all CSV files in data/ and results/ folders
+data/*.csv
+results/*.csv
+
+# Optional: Ignore all contents of data/ and results/ folders
+# Uncomment if you want to ignore everything in these folders
+# data/*
+# results/*
+
+# Allow kepping the folders traked via .gitkeep
+!data/.gitkeep
+!results/.gitkeep
