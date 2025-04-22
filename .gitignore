@@ -1,6 +1,9 @@
 # Ignore virtual environment folders
 .venv/
 
+# Ignore Cache and temporary files
+__pycache__/
+
 # Ignore all CSV files in data/ and results/ folders
 data/*.csv
 results/*.csv
