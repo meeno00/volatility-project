@@ -153,7 +153,8 @@ def check_butterfly_arbitrage(qr_svi_fits):
         w = a + b * (rho * k_minus_m + sqrt_term)
         dw = b * (rho + k_minus_m / sqrt_term)
         d2w = b * sigma**2 / (sqrt_term**3)
-        g = 1 - k_vals * dw / w + (dw**2 / 4) * (1 / w * (k_vals**2 / w - 4)) + d2w / 2
+        # g = 1 - k_vals * dw / w + (dw**2 / 4) * (1 / w * (k_vals**2 / w - 4)) + d2w / 2
+        g = (1 - 0.5 * k_vals * dw / w)**2 - 0.25 * dw**2 * (1 / w + 1 / 4) + d2w / 2
         if np.any(g < 0):
             arbitrage_slices.append(expiry)
     return arbitrage_slices
@@ -171,7 +172,8 @@ def plot_svi_slice_with_density_check(expiry, qr_svi_fits):
     w = raw_svi_total_variance(k_vals, a, b, rho, m, sigma)
     dw = b * (rho + k_m / sqrt_term)
     d2w = b * sigma ** 2 / (sqrt_term ** 3)
-    g = 1 - k_vals * dw / w + (dw ** 2 / 4) * (1 / w * (k_vals ** 2 / w - 4)) + d2w / 2
+    # g = 1 - k_vals * dw / w + (dw ** 2 / 4) * (1 / w * (k_vals ** 2 / w - 4)) + d2w / 2
+    g = (1 - 0.5 * k_vals * dw / w)**2 - 0.25 * dw**2 * (1 / w + 1 / 4) + d2w / 2
 
     plt.figure(figsize=(10, 5))
     plt.title(f"SVI Total Variance and Density Check\nExpiry: {expiry.date()}")
@@ -242,10 +244,10 @@ def get_arbitrage_strikes(expiry, qr_svi_fits, forward=1.0, df_slice=None):
     dw = b * (rho + k_m / sqrt_term)
     d2w = b * sigma**2 / (sqrt_term**3)
 
-    g = 1 - k_vals * dw / w + (dw**2 / 4) * (1 / w * (k_vals**2 / w - 4)) + d2w / 2
+    # g = 1 - k_vals * dw / w + (dw**2 / 4) * (1 / w * (k_vals**2 / w - 4)) + d2w / 2
+    g = (1 - 0.5 * k_vals * dw / w)**2 - 0.25 * dw**2 * (1 / w + 1 / 4) + d2w / 2
     k_arbs = k_vals[g < 0]
 
-    # strike = F * exp(k)
     strikes = forward * np.exp(k_arbs)
     # market-bound filtering
     if df_slice is not None:

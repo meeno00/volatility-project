@@ -34,8 +34,8 @@ for exp in butterfly_arbs:
 
 print_all_arbitrage_strikes(qr_svi_fits, df)
 
-for key in qr_svi_fits.keys():
-    plot_market_vs_svi_iv(key, df, qr_svi_fits)
+# for key in qr_svi_fits.keys():
+#     plot_market_vs_svi_iv(key, df, qr_svi_fits)
 
 export_all_iv_comparisons(qr_svi_fits, df, directory="./results")
 
