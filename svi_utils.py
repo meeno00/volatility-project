@@ -276,41 +276,51 @@ def print_all_arbitrage_strikes(qr_svi_fits, preprocessed_df):
 # -------------------------------
 # Step 8: Export Market IV and SVI IV
 # -------------------------------
-def export_iv_comparison_to_csv(expiry, df, qr_svi_fits, output_path):
+def iv_comparison_to_dataframe(expiry, df, qr_svi_fits):
+    """
+    만기별로 SVI vs 시장 IV 비교 데이터를 DataFrame으로 반환한다.
+    """
     if expiry not in qr_svi_fits:
         print(f"Skip: {expiry} not in fit results")
-        return
-
+        return None
+    
     fit = qr_svi_fits[expiry]
     T = fit['T']
     a, b, rho, m, sigma = fit['params']
-
+    
     df_slice = df[df['expiration'] == expiry].copy()
     k = df_slice['k'].values
     iv_market = df_slice['mark_iv_decimal'].values
     w_svi = raw_svi_total_variance(k, a, b, rho, m, sigma)
     iv_svi = np.sqrt(w_svi / T)
-
+    
     result_df = df_slice[['expiration', 'strike_price', 'F', 'T', 'k']].copy()
     result_df['expiration'] = pd.to_datetime(result_df['expiration']).dt.strftime("%Y-%m-%d %H:%M:%S")
     result_df['iv_market'] = iv_market
     result_df['iv_svi'] = iv_svi
-
     result_df = result_df.sort_values(by='strike_price')
-    result_df.to_csv(output_path, index=False)
+    return result_df
 
 
-def export_all_iv_comparisons(qr_svi_fits, df, directory="./iv_exports"):
+def export_all_iv_comparisons_to_dataframe(qr_svi_fits, df, directory="./iv_exports", filename="iv_comparison_all.csv"):
     """
-    전체 만기별로 SVI vs 시장 IV 비교 데이터를 CSV로 저장한다.
+    전체 만기별 SVI vs 시장 IV 비교 데이터를 CSV로 저장한다.
     """
     os.makedirs(directory, exist_ok=True)
-
+    combined_data = []
+    
     for expiry in qr_svi_fits:
-        file_name = f"iv_comparison_{expiry.date()}.csv"
-        path = os.path.join(directory, file_name)
-        export_iv_comparison_to_csv(expiry, df, qr_svi_fits, path)
-        print(f"[Saved] {path}")
+        df_slice = iv_comparison_to_dataframe(expiry, df, qr_svi_fits)
+        if df_slice is not None:
+            combined_data.append(df_slice)
+            
+    if combined_data:
+        all_df = pd.concat(combined_data, ignore_index=True)
+        output_path = os.path.join(directory, filename)
+        all_df.to_csv(output_path, index=False)
+        print(f"[Saved] {output_path}")
+    else:
+        print("No data to save.")
 
 
 def print_iv_error_metrics_by_expiry(df, qr_svi_fits):

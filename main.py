@@ -2,7 +2,7 @@ from svi_utils import *
 from pricing import *
 
 # 파일 경로는 사용 환경에 맞게 수정
-OPTION_CSV_PATH = "./data/option_raw_data.csv"
+OPTION_CSV_PATH = "./data/option_raw_data_2.csv"
 
 # Step 0: 데이터 불러오기 및 전처리
 df_raw = pd.read_csv(OPTION_CSV_PATH)
@@ -37,7 +37,7 @@ print_all_arbitrage_strikes(qr_svi_fits, df)
 # for key in qr_svi_fits.keys():
 #     plot_market_vs_svi_iv(key, df, qr_svi_fits)
 
-export_all_iv_comparisons(qr_svi_fits, df, directory="./results")
+export_all_iv_comparisons_to_dataframe(qr_svi_fits, df, directory="./results")
 
 print_iv_error_metrics_by_expiry(df, qr_svi_fits)
 
