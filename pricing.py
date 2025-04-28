@@ -1,9 +1,9 @@
 import numpy as np
 from scipy.stats import norm
 import pandas as pd
+from typing import Dict, List, Any
 
-
-def black_scholes_price(F, K, T, sigma, option_type):
+def black_scholes_price(F: float, K: float, T: float, sigma: float, option_type: str) -> float:
     """
     Forward 기반 Black-Scholes 옵션 가격 계산 (할인율 1 가정)
 
@@ -31,7 +31,7 @@ def black_scholes_price(F, K, T, sigma, option_type):
         raise ValueError("option_type must be 'call' or 'put'")
 
 
-def simulate_option_prices_from_svi(df, qr_svi_fits):
+def simulate_option_prices_from_svi(df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> pd.DataFrame:
     """
     SVI IV로부터 Black-Scholes 옵션 가격을 재계산하여 mark_price와 비교
 
@@ -75,7 +75,7 @@ def simulate_option_prices_from_svi(df, qr_svi_fits):
     return pd.DataFrame(results)
 
 
-def print_price_error_metrics_by_expiry(df, qr_svi_fits):
+def print_price_error_metrics_by_expiry(df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> None:
     """
     각 만기별로 SVI 모델 가격 vs 시장 가격의 RMSE, MAE, Mean Error를 출력
     """
@@ -115,7 +115,7 @@ def print_price_error_metrics_by_expiry(df, qr_svi_fits):
         print(f"{expiry.date()} → RMSE: {rmse:.2f}, MAE: {mae:.2f}, Mean Error: {mean_error:.2f}, Mean RelErr: {mean_relative_error:.2f}%")
 
 
-def compute_local_vol_from_svi_linear_with_extrapolation(qr_svi_fits, k_grid, T_eval_grid):
+def compute_local_vol_from_svi_linear_with_extrapolation(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], k_grid: np.ndarray, T_eval_grid: np.ndarray) -> pd.DataFrame:
     """
     Dupire local volatility 계산 (∂w/∂T: linear + forward/backward diff 포함)
     Returns:
@@ -124,7 +124,7 @@ def compute_local_vol_from_svi_linear_with_extrapolation(qr_svi_fits, k_grid, T_
     expiries = sorted(qr_svi_fits.keys())
     T_list = [qr_svi_fits[exp]['T'] for exp in expiries]
 
-    def w_svi(k, params):
+    def w_svi(k: float, params: List[float]) -> float:
         a, b, rho, m, sigma = params
         return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
 
@@ -207,7 +207,7 @@ def compute_local_vol_from_svi_linear_with_extrapolation(qr_svi_fits, k_grid, T_
     return pd.DataFrame(local_vol_data)
 
 
-def compute_local_vol_at_market_points(qr_svi_fits, df):
+def compute_local_vol_at_market_points(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], df: pd.DataFrame) -> pd.DataFrame:
     """
     시장 데이터에 실제 존재하는 (T, k) 조합에서만 Dupire local volatility 계산
     Returns:
@@ -216,7 +216,7 @@ def compute_local_vol_at_market_points(qr_svi_fits, df):
     expiries = sorted(qr_svi_fits.keys())
     T_list = [qr_svi_fits[exp]['T'] for exp in expiries]
 
-    def w_svi(k, params):
+    def w_svi(k: float, params: List[float]) -> float:
         a, b, rho, m, sigma = params
         return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
 
@@ -297,7 +297,7 @@ def compute_local_vol_at_market_points(qr_svi_fits, df):
     return pd.DataFrame(local_vol_data)
 
 
-def export_local_vol_with_iv(local_vol_df, df, qr_svi_fits, output_path):
+def export_local_vol_with_iv(local_vol_df: pd.DataFrame, df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], output_path: str) -> None:
     """
     local_vol_df에 시장 IV와 SVI IV를 추가하여 정제 후 CSV 저장
     """

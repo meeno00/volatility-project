@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize, Bounds
+from scipy.optimize import minimize, Bounds, OptimizeResult
 import os
+from typing import Dict, List, Tuple, Callable, Any, Optional
 
 
 # -------------------------------
@@ -50,14 +51,14 @@ def preprocess_option_data(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------------------
 # 단계 1: Square-root SVI 초기화
 # -------------------------------
-def square_root_svi_w(k, theta, rho, eta):
+def square_root_svi_w(k: np.ndarray, theta: np.ndarray, rho: float, eta: float) -> np.ndarray:
     phi = eta / (np.sqrt(theta) + 1e-8)  # 수치 안정성 보정
     term1 = 1 + rho * phi * k
     term2 = np.sqrt((phi * k + rho) ** 2 + 1 - rho ** 2)
     return theta * (term1 + term2)
 
 
-def fit_square_root_svi(df: pd.DataFrame):
+def fit_square_root_svi(df: pd.DataFrame) -> Dict[str, Any]:
     grouped = df.groupby('expiration')
     theta_by_expiry = {}
     slice_data = {}
@@ -78,7 +79,7 @@ def fit_square_root_svi(df: pd.DataFrame):
 
     all_k, all_w, all_theta = map(np.array, [all_k, all_w, all_theta])
 
-    def svi_loss(params):
+    def svi_loss(params: Tuple[float, float]) -> float:
         rho, eta = params
         if not (-0.999 < rho < 0.999 and eta > 0): return np.inf
         w_model = square_root_svi_w(all_k, all_theta, rho, eta)
@@ -99,21 +100,21 @@ def fit_square_root_svi(df: pd.DataFrame):
 # -------------------------------
 # 단계 2: QR SVI 피팅
 # -------------------------------
-def raw_svi_total_variance(k, a, b, rho, m, sigma):
+def raw_svi_total_variance(k: np.ndarray, a: float, b: float, rho: float, m: float, sigma: float) -> np.ndarray:
     return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
 
 
-def fit_raw_svi_slice(k, w, initial_params):
+def fit_raw_svi_slice(k: np.ndarray, w: np.ndarray, initial_params: List[float]) -> np.ndarray:
     bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
 
-    def loss(params):
+    def loss(params: List[float]) -> float:
         a, b, rho, m, sigma = params
         model = raw_svi_total_variance(k, a, b, rho, m, sigma)
         return np.mean((model - w) ** 2)
     return minimize(loss, initial_params, bounds=bounds, method='L-BFGS-B').x
 
 
-def fit_qr_svi_all_slices(df, theta_map, svi_square_root_func):
+def fit_qr_svi_all_slices(df: pd.DataFrame, theta_map: Dict[pd.Timestamp, float], svi_square_root_func: Callable) -> Dict[pd.Timestamp, Dict[str, Any]]:
     results = {}
     for expiry, group in df.groupby('expiration'):
         T = group['T'].iloc[0]
@@ -131,7 +132,7 @@ def fit_qr_svi_all_slices(df, theta_map, svi_square_root_func):
 # -------------------------------
 # 단계 3: Arbitrage 확인
 # -------------------------------
-def check_calendar_arbitrage(qr_svi_fits):
+def check_calendar_arbitrage(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> List[Tuple[pd.Timestamp, pd.Timestamp]]:
     expiries = sorted(qr_svi_fits.keys())
     warnings = []
     for i in range(len(expiries) - 1):
@@ -143,7 +144,7 @@ def check_calendar_arbitrage(qr_svi_fits):
     return warnings
 
 
-def check_butterfly_arbitrage(qr_svi_fits):
+def check_butterfly_arbitrage(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> List[pd.Timestamp]:
     arbitrage_slices = []
     k_vals = np.linspace(-2, 2, 100)
     for expiry, entry in qr_svi_fits.items():
@@ -163,7 +164,7 @@ def check_butterfly_arbitrage(qr_svi_fits):
 # -------------------------------
 # 단계 4: Butterfly Arbitrage 시각화
 # -------------------------------
-def plot_svi_slice_with_density_check(expiry, qr_svi_fits):
+def plot_svi_slice_with_density_check(expiry: pd.Timestamp, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> None:
     import matplotlib.pyplot as plt
     k_vals = np.linspace(-2, 2, 400)
     a, b, rho, m, sigma = qr_svi_fits[expiry]['params']
@@ -190,7 +191,7 @@ def plot_svi_slice_with_density_check(expiry, qr_svi_fits):
 # -------------------------------
 # 단계 5: Market IV 대 SVI IV 비교
 # -------------------------------
-def plot_market_vs_svi_iv(expiry, df, qr_svi_fits):
+def plot_market_vs_svi_iv(expiry: pd.Timestamp, df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> None:
     """
     주어진 expiry에 대해 market IV와 피팅된 SVI IV를 비교하고 플롯합니다.
     """
@@ -228,7 +229,7 @@ def plot_market_vs_svi_iv(expiry, df, qr_svi_fits):
 # -------------------------------
 # 단계 6: Arbitrage Strikes 식별
 # -------------------------------
-def get_arbitrage_strikes(expiry, qr_svi_fits, forward=1.0, df_slice=None):
+def get_arbitrage_strikes(expiry: pd.Timestamp, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], forward: float = 1.0, df_slice: Optional[pd.DataFrame] = None) -> List[float]:
     """
     g(k) < 0인 log-moneyness에 해당하는 strike 목록 반환
     forward 값은 기본적으로 1.0이며, 실제 underlying_price를 전달해야 정확
@@ -261,7 +262,7 @@ def get_arbitrage_strikes(expiry, qr_svi_fits, forward=1.0, df_slice=None):
 # -------------------------------
 # 단계 7: 만기별 Arbitrage Strikes 출력
 # -------------------------------
-def print_all_arbitrage_strikes(qr_svi_fits, preprocessed_df):
+def print_all_arbitrage_strikes(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], preprocessed_df: pd.DataFrame) -> None:
     """시장 범위 내의 butterfly arbitrage strikes를 출력합니다."""
     forward_by_expiry = preprocessed_df.groupby('expiration')['F'].mean().to_dict()
     for expiry in sorted(qr_svi_fits.keys()):
@@ -276,7 +277,7 @@ def print_all_arbitrage_strikes(qr_svi_fits, preprocessed_df):
 # -------------------------------
 # 단계 8: Market IV 및 SVI IV 내보내기
 # -------------------------------
-def iv_comparison_to_dataframe(expiry, df, qr_svi_fits):
+def iv_comparison_to_dataframe(expiry: pd.Timestamp, df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> Optional[pd.DataFrame]:
     """
     만기별로 SVI 대 market IV 비교 데이터를 DataFrame으로 반환합니다.
     """
@@ -302,7 +303,7 @@ def iv_comparison_to_dataframe(expiry, df, qr_svi_fits):
     return result_df
 
 
-def export_all_iv_comparisons_to_dataframe(qr_svi_fits, df, directory="./iv_exports", filename="iv_comparison_all.csv"):
+def export_all_iv_comparisons_to_dataframe(qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]], df: pd.DataFrame, directory: str = "./iv_exports", filename: str = "iv_comparison_all.csv") -> None:
     """
     전체 만기별 SVI 대 market IV 비교 데이터를 CSV로 저장합니다.
     """
@@ -323,7 +324,7 @@ def export_all_iv_comparisons_to_dataframe(qr_svi_fits, df, directory="./iv_expo
         print("No data to save.")
 
 
-def print_iv_error_metrics_by_expiry(df, qr_svi_fits):
+def print_iv_error_metrics_by_expiry(df: pd.DataFrame, qr_svi_fits: Dict[pd.Timestamp, Dict[str, Any]]) -> None:
     """
     각 만기별로 IV market 대 SVI fit 오차를 출력 (RMSE, MAE, Mean Error 포함)
     """
