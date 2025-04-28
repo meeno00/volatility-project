@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize, Bounds, OptimizeResult
+from scipy.optimize import minimize, Bounds
 import os
 from typing import Dict, List, Tuple, Callable, Any, Optional
+from pricing import black_scholes_price
 
 
 # -------------------------------
@@ -104,27 +105,210 @@ def raw_svi_total_variance(k: np.ndarray, a: float, b: float, rho: float, m: flo
     return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
 
 
-def fit_raw_svi_slice(k: np.ndarray, w: np.ndarray, initial_params: List[float]) -> np.ndarray:
-    bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
+# def fit_raw_svi_slice(k: np.ndarray, w: np.ndarray, initial_params: List[float]) -> np.ndarray:
+#     bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
 
-    def loss(params: List[float]) -> float:
+#     def loss(params: List[float]) -> float:
+#         a, b, rho, m, sigma = params
+#         model = raw_svi_total_variance(k, a, b, rho, m, sigma)
+#         return np.mean((model - w) ** 2)
+#     return minimize(loss, initial_params, bounds=bounds, method='L-BFGS-B').x
+
+# === 핵심 수정 함수 ===
+def fit_raw_svi_slice(
+    # 기존 인수
+    k: np.ndarray,
+    w_market: np.ndarray,
+    initial_params: List[float],
+    # 새로 추가된 인수
+    market_prices: np.ndarray,
+    forwards: np.ndarray,
+    strikes: np.ndarray,
+    option_types: np.ndarray,
+    T: float,
+    optimization_target: str = 'variance', # 'variance' 또는 'price_abs'
+) -> np.ndarray:
+    """
+    단일 만기 슬라이스에 대해 SVI 파라미터를 최적화합니다.
+    최적화 목표(total variance 또는 option price)를 선택할 수 있습니다.
+    """
+    # 경계 조건은 기존과 동일하게 사용
+    bounds = Bounds([-np.inf, 0.0001, -0.999, -np.inf, 0.0001], # a, m 하한 변경
+                    [np.inf, np.inf, 0.999, np.inf, np.inf])  # 상한 변경 (L-BFGS-B는 무한대 지원)
+    # bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
+    # 필요 시 기존 bounds 사용: Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
+
+    # --- 손실 함수 정의 ---
+    def loss_variance(params: List[float]) -> float:
+        """총 분산 MSE 손실 함수"""
         a, b, rho, m, sigma = params
-        model = raw_svi_total_variance(k, a, b, rho, m, sigma)
-        return np.mean((model - w) ** 2)
-    return minimize(loss, initial_params, bounds=bounds, method='L-BFGS-B').x
+        # 파라미터 유효성 기본 체크 (b, sigma > 0, |rho| < 1)
+        if b <= 0 or sigma <= 0 or abs(rho) >= 1.0: return np.inf
+
+        w_model = raw_svi_total_variance(k, a, b, rho, m, sigma)
+        # 모델 분산이 음수가 되지 않도록 보장 (최소 0)
+        w_model = np.maximum(w_model, 0.0)
+        if not np.all(np.isfinite(w_model)): return np.inf
+        return np.mean((w_model - w_market) ** 2)
+    
+    def loss_volatility(params: List[float]) -> float:
+        """IV MSE 손실 함수"""
+        a, b, rho, m, sigma = params
+        # 파라미터 유효성 기본 체크
+        if b <= 0 or sigma <= 0 or abs(rho) >= 1.0: return np.inf
+
+        w_model = raw_svi_total_variance(k, a, b, rho, m, sigma)
+        # 모델 분산 음수 방지 및 0 나누기 방지
+        w_model = np.maximum(w_model, 1e-12)
+        if not np.all(np.isfinite(w_model)): return np.inf
+        
+        # IV 계산
+        iv_model = np.sqrt(w_model / T)
+        iv_market = np.sqrt(w_market / T)
+        return np.mean((iv_model - iv_market) ** 2)
 
 
-def fit_qr_svi_all_slices(df: pd.DataFrame, theta_map: Dict[pd.Timestamp, float], svi_square_root_func: Callable) -> Dict[pd.Timestamp, Dict[str, Any]]:
+    def loss_price_abs(params: List[float]) -> float:
+        """절대 가격 MSE 손실 함수"""
+        a, b, rho, m, sigma = params
+        # 파라미터 유효성 기본 체크
+        if b <= 0 or sigma <= 0 or abs(rho) >= 1.0: return np.inf
+
+        w_model = raw_svi_total_variance(k, a, b, rho, m, sigma)
+        # 모델 분산 음수 방지 및 0 나누기 방지
+        w_model = np.maximum(w_model, 1e-12) # 가격 계산 위해 0보다 커야 함
+        if not np.all(np.isfinite(w_model)): return np.inf
+
+        # IV 계산
+        if T <= 1e-8: return np.inf
+        iv_model = np.sqrt(w_model / T)
+
+        # 모델 가격 계산
+        model_prices = np.array([
+            black_scholes_price(f, kk, T, iv, opt_type)
+            for f, kk, iv, opt_type in zip(forwards, strikes, iv_model, option_types)
+        ])
+
+        if not np.all(np.isfinite(model_prices)): return np.inf
+        return np.mean((model_prices - market_prices) ** 2)
+    
+    def loss_price_rel(params: List[float]) -> float:
+        """상대 가격 MSE 손실 함수"""
+        a, b, rho, m, sigma = params
+        # 파라미터 유효성 기본 체크
+        if b <= 0 or sigma <= 0 or abs(rho) >= 1.0: return np.inf
+
+        w_model = raw_svi_total_variance(k, a, b, rho, m, sigma)
+        # 모델 분산 음수 방지 및 0 나누기 방지
+        w_model = np.maximum(w_model, 1e-12)
+        if not np.all(np.isfinite(w_model)): return np.inf
+
+        # IV 계산
+        if T <= 1e-8: return np.inf
+        iv_model = np.sqrt(w_model / T)
+
+        # 모델 가격 계산
+        model_prices = np.array([
+            black_scholes_price(f, kk, T, iv, opt_type)
+            for f, kk, iv, opt_type in zip(forwards, strikes, iv_model, option_types)
+        ])
+
+        if not np.all(np.isfinite(model_prices)): return np.inf
+        # 상대 오차 계산 (0 나누기 방지)
+        relative_diff = (model_prices - market_prices) / np.maximum(market_prices, 1e-8)
+        return np.mean(relative_diff ** 2)
+
+    # --- 최적화 목표 선택 ---
+    if optimization_target == 'variance':
+        loss_function = loss_variance
+    elif optimization_target == 'price_abs':
+        loss_function = loss_price_abs
+    elif optimization_target == 'price_rel':
+        loss_function = loss_price_rel
+    elif optimization_target == 'iv':
+        loss_function = loss_volatility
+    else:
+        raise ValueError(f"Unknown optimization_target: {optimization_target}. Choose 'variance' or 'price_abs'.")
+
+    # --- 최적화 실행 (L-BFGS-B 사용, fallback 제거) ---
+    result = minimize(loss_function, initial_params, method='L-BFGS-B', bounds=bounds)
+
+    # 최적화 실패 시 경고만 출력 (안정성 체크 보류)
+    if not result.success:
+        print(f"Warning: Raw SVI fitting may have failed for target '{optimization_target}' "
+              f"on slice T={T:.4f}. Message: {result.message}")
+
+    return result.x
+
+
+# def fit_qr_svi_all_slices(df: pd.DataFrame, theta_map: Dict[pd.Timestamp, float], svi_square_root_func: Callable) -> Dict[pd.Timestamp, Dict[str, Any]]:
+#     results = {}
+#     for expiry, group in df.groupby('expiration'):
+#         T = group['T'].iloc[0]
+#         k_vals = group['k'].values
+#         w_vals = group['total_variance'].values
+#         w_sqrt = svi_square_root_func(k_vals, theta_map[expiry])
+#         a_init = np.min(w_sqrt)
+#         m_init = k_vals[np.argmin(np.abs(k_vals))]
+#         init_params = [a_init, 0.1, -0.5, m_init, 0.1]
+#         fitted_params = fit_raw_svi_slice(k_vals, w_vals, initial_params=init_params)
+#         results[expiry] = {'T': T, 'params': fitted_params}
+#     return results
+
+# === 기존 함수 수정 ===
+def fit_qr_svi_all_slices(
+    df: pd.DataFrame,
+    theta_map: Dict[pd.Timestamp, float],
+    svi_square_root_func: Callable,
+    optimization_target: str = 'variance' # 최적화 목표 인수 추가
+) -> Dict[pd.Timestamp, Dict[str, Any]]:
+    """
+    모든 만기 슬라이스에 대해 QR SVI 파라미터를 피팅합니다.
+    최적화 목표(variance 또는 price_abs)를 선택할 수 있습니다.
+    """
     results = {}
     for expiry, group in df.groupby('expiration'):
         T = group['T'].iloc[0]
         k_vals = group['k'].values
-        w_vals = group['total_variance'].values
-        w_sqrt = svi_square_root_func(k_vals, theta_map[expiry])
-        a_init = np.min(w_sqrt)
-        m_init = k_vals[np.argmin(np.abs(k_vals))]
-        init_params = [a_init, 0.1, -0.5, m_init, 0.1]
-        fitted_params = fit_raw_svi_slice(k_vals, w_vals, initial_params=init_params)
+        w_vals = group['total_variance'].values # 분산 타겟용
+
+        # 가격 타겟을 위한 데이터 추출
+        market_prices = group['mark_price_usd'].values
+        forwards = group['F'].values
+        strikes = group['strike_price'].values
+        option_types = group['type'].values
+
+        # 초기값 계산 (기존 로직 유지)
+        current_theta = theta_map.get(expiry, 1e-6) # 기본값 추가
+        current_theta = max(current_theta, 1e-6)    # 0 방지
+        try:
+            w_sqrt = svi_square_root_func(k_vals, current_theta)
+            if not np.all(np.isfinite(w_sqrt)) or np.any(w_sqrt < 0): raise ValueError("Invalid w_sqrt")
+            a_init = min(np.min(w_sqrt), np.min(w_vals)) * 0.9
+            m_init = k_vals[np.argmin(np.abs(k_vals))]
+            # b, rho, sigma는 고정 초기값 사용 (단순화)
+            b_init = 0.1
+            rho_init = -0.7
+            sigma_init = 0.1
+        except: # 오류 시 기본값 사용
+             a_init, b_init, rho_init, m_init, sigma_init = np.median(w_vals)*0.8, 0.1, -0.7, 0.0, 0.1
+
+        init_params = [a_init, b_init, rho_init, m_init, sigma_init]
+
+        # fit_raw_svi_slice 호출 시 추가 인수 전달
+        fitted_params = fit_raw_svi_slice(
+            k=k_vals,
+            w_market=w_vals,
+            initial_params=init_params,
+            # 가격 관련 인수 전달
+            market_prices=market_prices,
+            forwards=forwards,
+            strikes=strikes,
+            option_types=option_types,
+            T=T,
+            # 최적화 목표 전달
+            optimization_target=optimization_target
+        )
         results[expiry] = {'T': T, 'params': fitted_params}
     return results
 
