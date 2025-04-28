@@ -69,23 +69,34 @@ def fit_square_root_svi(df: pd.DataFrame) -> Dict[str, Any]:
         group['abs_k'] = np.abs(group['k'])
         atm_row = group.loc[group['abs_k'].idxmin()]
         theta_by_expiry[expiry] = atm_row['total_variance']
-        slice_data[expiry] = group[['k', 'total_variance']]
+        # slice_data[expiry] = group[['k', 'total_variance']]
+        slice_data[expiry] = group[['k', 'total_variance', 'T']]
 
-    all_k, all_w, all_theta = [], [], []
+    all_k, all_w, all_theta, all_T = [], [], [], []
     for expiry, data in slice_data.items():
         theta = theta_by_expiry[expiry]
         all_k.extend(data['k'].tolist())
         all_w.extend(data['total_variance'].tolist())
+        all_T.extend(data['T'].tolist())
         all_theta.extend([theta] * len(data))
 
-    all_k, all_w, all_theta = map(np.array, [all_k, all_w, all_theta])
+    all_k, all_w, all_theta, all_T = map(np.array, [all_k, all_w, all_theta, all_T])
 
+    # def svi_loss(params: Tuple[float, float]) -> float:
+    #     rho, eta = params
+    #     if not (-0.999 < rho < 0.999 and eta > 0): return np.inf
+    #     w_model = square_root_svi_w(all_k, all_theta, rho, eta)
+    #     if not np.all(np.isfinite(w_model)): return np.inf
+    #     return np.mean((w_model - all_w) ** 2)
+    
     def svi_loss(params: Tuple[float, float]) -> float:
         rho, eta = params
         if not (-0.999 < rho < 0.999 and eta > 0): return np.inf
         w_model = square_root_svi_w(all_k, all_theta, rho, eta)
+        iv_model = np.sqrt(w_model / all_T)
+        iv_market = np.sqrt(all_w / all_T)
         if not np.all(np.isfinite(w_model)): return np.inf
-        return np.mean((w_model - all_w) ** 2)
+        return np.mean((iv_model - iv_market) ** 2)
 
     result = minimize(svi_loss, [0.0, 0.5], bounds=[(-0.999, 0.999), (1e-4, 5.0)])
     fitted_rho, fitted_eta = result.x
