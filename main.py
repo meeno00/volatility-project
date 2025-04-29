@@ -3,7 +3,7 @@ from svi_utils import *
 from pricing import *
 
 # 파일 경로는 사용 환경에 맞게 수정
-OPTION_CSV_PATH = "./data/option_raw_data.csv"
+OPTION_CSV_PATH = "./data/option_raw_data_250429_0130.csv"
 RESULTS_DIR = "./results"
 
 # === 최적화 방법 설정 ===
@@ -11,7 +11,7 @@ RESULTS_DIR = "./results"
 # 'price_abs': 절대 옵션 가격 MSE 최소화
 # 'price_rel': 상대 옵션 가격 MSE 최소화
 # 'iv': IV MSE 최소화
-OPTIMIZATION_TARGET = 'iv' # <--- 여기를 'variance', 'price_abs', 'price_rel'로 변경하여 최적화 방법을 선택
+OPTIMIZATION_TARGET = 'iv' # <--- 여기를 'iv', 'variance', 'price_abs', 'price_rel'로 변경하여 최적화 방법을 선택
 
 # --- 실행 ---
 start_time = time.time()
@@ -59,7 +59,7 @@ if butterfly_arbs:
     print("\n[Butterfly Arbitrage Detected]")
     for exp in butterfly_arbs:
         print(exp)
-        plot_svi_slice_with_density_check(pd.Timestamp(exp), qr_svi_fits)
+        # plot_svi_slice_with_density_check(pd.Timestamp(exp), qr_svi_fits)
 
 print_all_arbitrage_strikes(qr_svi_fits, df)
 

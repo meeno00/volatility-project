@@ -58,7 +58,6 @@ def square_root_svi_w(k: np.ndarray, theta: np.ndarray, rho: float, eta: float) 
     term2 = np.sqrt((phi * k + rho) ** 2 + 1 - rho ** 2)
     return theta * (term1 + term2)
 
-
 def fit_square_root_svi(df: pd.DataFrame) -> Dict[str, Any]:
     grouped = df.groupby('expiration')
     theta_by_expiry = {}
@@ -69,32 +68,24 @@ def fit_square_root_svi(df: pd.DataFrame) -> Dict[str, Any]:
         group['abs_k'] = np.abs(group['k'])
         atm_row = group.loc[group['abs_k'].idxmin()]
         theta_by_expiry[expiry] = atm_row['total_variance']
-        # slice_data[expiry] = group[['k', 'total_variance']]
-        slice_data[expiry] = group[['k', 'total_variance', 'T']]
+        slice_data[expiry] = group[['k', 'mark_iv_decimal', 'T']]
 
-    all_k, all_w, all_theta, all_T = [], [], [], []
+    all_k, all_iv, all_theta, all_T = [], [], [], []
     for expiry, data in slice_data.items():
         theta = theta_by_expiry[expiry]
         all_k.extend(data['k'].tolist())
-        all_w.extend(data['total_variance'].tolist())
+        all_iv.extend(data['mark_iv_decimal'].tolist())
         all_T.extend(data['T'].tolist())
         all_theta.extend([theta] * len(data))
 
-    all_k, all_w, all_theta, all_T = map(np.array, [all_k, all_w, all_theta, all_T])
-
-    # def svi_loss(params: Tuple[float, float]) -> float:
-    #     rho, eta = params
-    #     if not (-0.999 < rho < 0.999 and eta > 0): return np.inf
-    #     w_model = square_root_svi_w(all_k, all_theta, rho, eta)
-    #     if not np.all(np.isfinite(w_model)): return np.inf
-    #     return np.mean((w_model - all_w) ** 2)
+    all_k, all_iv, all_theta, all_T = map(np.array, [all_k, all_iv, all_theta, all_T])
     
     def svi_loss(params: Tuple[float, float]) -> float:
         rho, eta = params
         if not (-0.999 < rho < 0.999 and eta > 0): return np.inf
         w_model = square_root_svi_w(all_k, all_theta, rho, eta)
         iv_model = np.sqrt(w_model / all_T)
-        iv_market = np.sqrt(all_w / all_T)
+        iv_market = all_iv.copy()
         if not np.all(np.isfinite(w_model)): return np.inf
         return np.mean((iv_model - iv_market) ** 2)
 
@@ -115,17 +106,6 @@ def fit_square_root_svi(df: pd.DataFrame) -> Dict[str, Any]:
 def raw_svi_total_variance(k: np.ndarray, a: float, b: float, rho: float, m: float, sigma: float) -> np.ndarray:
     return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + sigma**2))
 
-
-# def fit_raw_svi_slice(k: np.ndarray, w: np.ndarray, initial_params: List[float]) -> np.ndarray:
-#     bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
-
-#     def loss(params: List[float]) -> float:
-#         a, b, rho, m, sigma = params
-#         model = raw_svi_total_variance(k, a, b, rho, m, sigma)
-#         return np.mean((model - w) ** 2)
-#     return minimize(loss, initial_params, bounds=bounds, method='L-BFGS-B').x
-
-# === 핵심 수정 함수 ===
 def fit_raw_svi_slice(
     # 기존 인수
     k: np.ndarray,
@@ -146,7 +126,6 @@ def fit_raw_svi_slice(
     # 경계 조건은 기존과 동일하게 사용
     bounds = Bounds([-np.inf, 0.0001, -0.999, -np.inf, 0.0001], # a, m 하한 변경
                     [np.inf, np.inf, 0.999, np.inf, np.inf])  # 상한 변경 (L-BFGS-B는 무한대 지원)
-    # bounds = Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
     # 필요 시 기존 bounds 사용: Bounds([-1.0, 0.0001, -0.999, -5.0, 0.0001], [1.0, 10.0, 0.999, 5.0, 5.0])
 
     # --- 손실 함수 정의 ---
@@ -251,22 +230,6 @@ def fit_raw_svi_slice(
 
     return result.x
 
-
-# def fit_qr_svi_all_slices(df: pd.DataFrame, theta_map: Dict[pd.Timestamp, float], svi_square_root_func: Callable) -> Dict[pd.Timestamp, Dict[str, Any]]:
-#     results = {}
-#     for expiry, group in df.groupby('expiration'):
-#         T = group['T'].iloc[0]
-#         k_vals = group['k'].values
-#         w_vals = group['total_variance'].values
-#         w_sqrt = svi_square_root_func(k_vals, theta_map[expiry])
-#         a_init = np.min(w_sqrt)
-#         m_init = k_vals[np.argmin(np.abs(k_vals))]
-#         init_params = [a_init, 0.1, -0.5, m_init, 0.1]
-#         fitted_params = fit_raw_svi_slice(k_vals, w_vals, initial_params=init_params)
-#         results[expiry] = {'T': T, 'params': fitted_params}
-#     return results
-
-# === 기존 함수 수정 ===
 def fit_qr_svi_all_slices(
     df: pd.DataFrame,
     theta_map: Dict[pd.Timestamp, float],
